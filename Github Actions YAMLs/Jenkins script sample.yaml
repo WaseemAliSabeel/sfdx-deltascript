@@ -1,0 +1,108 @@
+#!groovy
+import groovy.json.*
+def branchname=env.BRANCH_NAME
+def sonarbranchurl="https://globalsonarqube.deloitte.com/dashboard?id=SouthernCaliforniaEdision_ext&branch=${branchname}"
+def sonarurl="https://globalsonarqube.deloitte.com/"
+def jobBaseName = "${env.JOB_NAME}".split('/').last()  
+node ('mcxwpdop08_Linux')
+{ 
+def SalesforceCLI = tool 'SalesforceCLI'
+stage('PreStep: Clean Workspace')
+{ 
+cleanWs()
+}
+stage('SonarQube analysis') 
+{
+git branch:'VegcommQA3', credentialsId:'d0341ee0-11fb-4194-9d53-9bc69a4af908', url:'https://github.com/EdisonInternational/Salesforce_SCE.git'
+withCredentials([string(credentialsId: 'sonarlogin', variable: 'slogin')])
+{
+//def rc = sh returnStatus: true, script: "//var//lib//jenkins//SQ//sonar-scanner-3.2.0.1227//bin//sonar-scanner -Dsonar.host.url=${sonarurl} -Dsonar.projectKey=SouthernCaliforniaEdison_ext -Dsonar.login=${slogin} -Dsonar.sources=force-app -Dsonar.sourceEncoding=UTF-8 -Dsonar.pdf.skip=false -Dsonar.inclusions=**/*.cls"
+}
+}
+  stage('Send Code Scan Report')
+{
+emailext (attachmentsPattern: '.scannerwork/*.pdf,.scannerwork/*.xlsx',to: 'sridhar.pattapali@sce.com,rajkumar5@deloitte.com,Fredy.Colli@sce.com',mimeType: 'text/html',
+subject: "Build- ${env.BUILD_NUMBER} - SCE SonarQube Analysis Report: Pull Request of ${branchname} to Main branch",
+body: """<!DOCTYPE html> 
+<html>
+<head>
+<style>
+table {
+font-family: arial, sans-serif;
+border-collapse: collapse;
+width: 100%;
+}
+td, th {
+border: 1px solid #000000;
+text-align: left;
+padding: 4px;
+}
+tr:nth-child(even) {
+background-color: #dddddd;
+}
+</style>
+</head>
+<body>
+<h2>SCE: SonarQube Scan Report</h2>
+<br>
+<h3><u>Pull Request Analysis</u></h3>
+<table>
+<tr>
+<th>Project Name</th>
+<th>Branch Name</th>
+<th>Sonar URL</th>
+</tr>
+<tr>
+<td>SCE</td>
+<td>${branchname}</td>
+<td>${sonarbranchurl}</td>
+</tr>
+</table>
+</body>
+</html>
+""");
+}
+ node ('mcwwpdop11')
+{   
+stage('Checkout Branch') {
+git branch:'VegcommQA3', credentialsId:'d0341ee0-11fb-4194-9d53-9bc69a4af908', url:'https://github.com/EdisonInternational/Salesforce_SCE.git'
+}	
+  stage('Authenticate Prod and Validate'){  
+
+withCredentials([file(credentialsId: 'SALESFORCE_PRIVATE_KEY', variable: 'JWT_Secret_CRT'), string(credentialsId: 'CONNECTED_APP_CONSUMER_KEY_DEPLOYMENT_USER_VEGCOMMQA2', variable: 'cKey'), string(credentialsId: 'USERNAME_DEPLOYMENT_USER_VEGCOMMQA2', variable: 'uName'),string(credentialsId: 'SFDC_HOST_DH_TEST', variable: 'hName')])
+{
+echo "Client id ${cKey}"
+echo "UserName is ${uName}"
+echo "Instance Url is ${hName}"
+rc = bat returnStatus: true, script: "\"${SalesforceCLI}\"sfdx force:auth:jwt:grant --clientid 3MVG97wqanbUM37J.lBdLFQ4Ba4uzx6qWPNZd8gyYJmXEACzge6nGUbQ5djGxt6FUsP8KI_ebSyvuGBnyf8mC --jwtkeyfile C:\\Arbora\\Hotfixqa\\server.key --username deployment-user@deloitte.com.vegcommqa2 --instanceurl https://test.salesforce.com"
+echo "rc is ${rc}"
+if (rc != 0) 
+{ 
+error 'org authorization failed' 
+}
+rc = bat returnStdout: true, script: "\"${SalesforceCLI}\"sfdx force:source:deploy -p force-app/main/default -u deployment-user@deloitte.com.vegcommqa2 -c"
+rc1 = bat returnStatus: true, script: "\"${SalesforceCLI}\"sfdx force:auth:logout --targetusername ${uName} -p"	
+}
+  }
+}
+
+stage('Send Email') {
+         emailext attachLog: true, 
+         body: """Build Status: ${currentBuild.currentResult} --- Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'
+                  View console output at "${env.BUILD_URL}"
+                  ${env.JOB_NAME}:${env.BUILD_NUMBER}"
+                  (Please check the attached build log for more details...)""",
+                  compressLog: true,
+       
+         recipientProviders: [[$class: 'CulpritsRecipientProvider'],
+         [$class: 'DevelopersRecipientProvider'],
+         [$class: 'RequesterRecipientProvider'],
+         [$class: 'FailingTestSuspectsRecipientProvider'],
+         [$class: 'FirstFailingBuildSuspectsRecipientProvider'],
+         [$class: 'UpstreamComitterRecipientProvider']],
+       
+         replyTo: 'do-not-reply@company.com',
+         subject: "Build Status: ${currentBuild.currentResult} - Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+         to: 'sridhar.pattapali@sce.com,rajkumar5@deloitte.com'
+   }
+}

@@ -1,0 +1,37 @@
+name: CI Validation
+
+on:
+  pull_request:
+    branches:
+      - mydevelop
+
+jobs:
+  #Triggers when there is a Pull Request creation and source branches are validated against CI Org.  
+  Validate_CI:
+    name: CI Validation
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'mydevelop'}}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-node@v1
+      with:
+        node-version: '12.x'    
+    
+    - name: Install Salesforce CLI
+      run: |
+        npm install sfdx-cli
+        node_modules/sfdx-cli/bin/run --version
+        node_modules/sfdx-cli/bin/run plugins --core
+    
+    - name: Update CLI
+      run: node_modules/sfdx-cli/bin/run update        
+      
+    - name: Authenticate CI ORG
+      run: |
+        echo "${SALESFORCE_JWT_SECRET_KEY}" > server.key
+        node_modules/sfdx-cli/bin/run force:auth:jwt:grant --clientid ${{ secrets.CI_CONSUMER_KEY }} --jwtkeyfile server.key --username ${{ secrets.CI_USERNAME}} --instanceurl ${{ secrets.SFDC_SANDBOX_HOST}} 
+      env:
+        SALESFORCE_JWT_SECRET_KEY: ${{ secrets.SALESFORCE_JWT_SECRET_KEY }}
+
+    - name: Validate CI ORG
+      run: node_modules/sfdx-cli/bin/run force:source:deploy -p force-app/main/default -u ${{ secrets.CI_USERNAME}} -c
